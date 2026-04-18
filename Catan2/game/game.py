@@ -44,6 +44,8 @@ class CatanGame:
         # -----------------------------
         self.game_over_screen = False
         self.winner = None
+        self.largest_army_owner = None
+        self.longest_road_owner = None
         self.game_stats = {}
         self.lobby_button_rect = pygame.Rect(700, 800, 400, 80)
         self.hexagon_positions = []
@@ -128,6 +130,12 @@ class CatanGame:
         self.dev_card_button_rect = pygame.Rect(730, H - 80, 200, 50)
         self.trade_button = pygame.Rect(50, 200, 160, 50)
         self.bank_trade_confirm_rect = pygame.Rect(420, 550, 150, 50)
+        self.longest_road_img = pygame.image.load("Images/game/longest_road.png").convert_alpha()
+        self.largest_army_img = pygame.image.load("Images/game/largest_army.png").convert_alpha()
+
+        # optional resize
+        self.longest_road_img = pygame.transform.smoothscale(self.longest_road_img, (52, 52))
+        self.largest_army_img = pygame.transform.smoothscale(self.largest_army_img, (52, 52))
         self.trade_offer_give = {}
         self.trade_offer_receive = {}
         self.trade_selected_target = None
@@ -341,6 +349,11 @@ class CatanGame:
                 if "winner" in r and r["winner"] and not self.game_over_screen:
                     self.winner = r["winner"]
                     self.game_over_screen = True
+                if "largest_army" in r:
+                    self.largest_army_owner = r["largest_army"]
+
+                if "longest_road" in r:
+                    self.longest_road_owner = r["longest_road"]
 
                     self.game_stats = self.build_game_stats(r)
 
@@ -449,15 +462,10 @@ class CatanGame:
             return {"success": False, "error": "no_selection"}
 
         a, b = self.hovered_road
-
         edge = (normalize(a), normalize(b))
 
-        # 🔥 invalid click protection
         if edge not in self.valid_roads:
-            return {
-                "success": False,
-                "error": "invalid_location"
-            }
+            return {"success": False, "error": "invalid_location"}
 
         try:
             response = self.client.send_request(
@@ -466,27 +474,43 @@ class CatanGame:
                 game_code=self.game_code,
                 edge=edge
             )
+
+            if not response:
+                return {"success": False, "error": "empty_response"}
+
+            if not response.get("success"):
+                return {
+                    "success": False,
+                    "error": response.get("error", "unknown_error")
+                }
+
             data = response.get("longest_road_update")
 
             if data:
-                new_owner = data["longest_road_owner"]
-                prev_owner = data["previous_owner"]
+                self.longest_road_owner = data.get("longest_road_owner")
+                self.largest_army_owner = data.get("largest_army_owner")  # if you send it later
+
+            # safe check
+            if data and isinstance(data, dict):
+                new_owner = data.get("longest_road_owner")
+                prev_owner = data.get("previous_owner")
 
                 if new_owner and new_owner != prev_owner:
                     self.longest_road_popup = {
                         "owner": new_owner,
                         "previous": prev_owner,
-                        "length": data["longest_road_length"]
+                        "length": data.get("longest_road_length", 0)
                     }
                     self.longest_road_popup_time = time.time()
+
+            self.show_road_spots = False
+            self.hovered_road = None
+
+            return response
+
         except Exception as e:
             print("[ROAD PLACE ERROR]", e)
             return {"success": False, "error": "network_error"}
-
-        self.show_road_spots = False
-        self.hovered_road = None
-
-        return response
 
     def draw_longest_road_popup(self, surface):
         if not self.longest_road_popup:
@@ -940,75 +964,177 @@ class CatanGame:
     def draw_players_panel(self, surface):
         mouse_pos = pygame.mouse.get_pos()
 
-        # Slightly wider panel to accommodate the PFP and text comfortably
-        panel_rect = pygame.Rect(W - 280, 10, 260, 220)
+        panel_rect = pygame.Rect(W - 320, 10, 310, 260)
 
-        # Draw Panel Background & Border
-        pygame.draw.rect(surface, (25, 22, 20), panel_rect, border_radius=12)
-        pygame.draw.rect(surface, (100, 80, 60), panel_rect, 2, border_radius=12)
+        pygame.draw.rect(surface, (25, 20, 15), panel_rect, border_radius=14)
+        pygame.draw.rect(surface, (46, 36, 24), panel_rect, 1, border_radius=14)
 
-        font = pygame.font.Font(None, 26)
-        title_font = pygame.font.Font(None, 30)
+        small_font = pygame.font.Font(None, 20)
+        font = pygame.font.Font(None, 24)
+
+        x_start = W - 305
+        y = 22
 
         # Header
-        x_start = W - 265
-        y = 25
-        title = title_font.render("PLAYERS", True, (200, 180, 150))
-        surface.blit(title, (x_start, y))
+        header_font = pygame.font.Font(None, 19)
+        header = header_font.render("PLAYERS", True, (107, 90, 66))
+        surface.blit(header, (x_start, y))
 
-        y += 45
+        round_text = header_font.render(f"{self.current_turn}'s turn", True, (90, 74, 52))
+        surface.blit(round_text, (panel_rect.right - round_text.get_width() - 14, y))
+
+        y += 22
+        pygame.draw.line(surface, (46, 36, 24), (x_start, y), (panel_rect.right - 14, y), 1)
+        y += 10
+
         self.player_rects.clear()
 
         for username in self.player_colors.keys():
-            # logic: active player is green, others are muted white/gray
+
+            # =========================
+            # PLAYER STATE
+            # =========================
             is_active = (username == self.current_turn)
-            text_color = (100, 255, 100) if is_active else (210, 210, 210)
             points = self.player_points.get(username, 0)
-
-            # 1. Define Row Rect (for the hover background effect)
-            row_rect = pygame.Rect(x_start - 5, y - 5, 240, 40)
-            if row_rect.collidepoint(mouse_pos):
-                pygame.draw.rect(surface, (50, 45, 40), row_rect, border_radius=8)
-
-            # 2. PROFILE PICTURE (Circular Clip Logic)
-            pfp = self.player_pfps.get(username)
-            pfp_size = 30
-            pfp_rect = pygame.Rect(x_start, y, pfp_size, pfp_size)
-
-            # Draw a backing circle for the PFP
-            pygame.draw.circle(surface, (40, 35, 30), pfp_rect.center, pfp_size // 2)
-
-            if pfp:
-                # We blit the PFP. Tip: If you want it perfectly circular,
-                # you'd need a mask, but centering it over the circle looks good.
-                surface.blit(pygame.transform.smoothscale(pfp, (pfp_size, pfp_size)), pfp_rect)
-            else:
-                # Default placeholder icon (gray circle with initials)
-                pygame.draw.circle(surface, (70, 70, 70), pfp_rect.center, pfp_size // 2)
-
-            # 3. PLAYER COLOR INDICATOR (Small ring around the PFP or a side-bar)
             player_color = self.player_colors[username]
-            # We'll put a small colored dot/ring next to the PFP
-            color_dot_pos = (x_start + 38, y + 15)
-            pygame.draw.circle(surface, player_color, color_dot_pos, 6)
 
-            # 4. TEXT (Username & Points)
-            display_text = f"{username}  •  {points} VP"
-            text_surf = font.render(display_text, True, text_color)
-            text_rect = text_surf.get_rect(midleft=(x_start + 55, y + 15))
+            # =========================
+            # ROW RECT
+            # =========================
+            row_rect = pygame.Rect(x_start - 6, y - 4, 298, 44)
 
             if is_active:
-                # Subtle glow/underline for active player
-                pygame.draw.line(surface, (100, 255, 100), (text_rect.left, text_rect.bottom + 2),
-                                 (text_rect.right, text_rect.bottom + 2), 2)
+                pygame.draw.rect(surface, (18, 32, 14), row_rect, border_radius=10)
+                pygame.draw.rect(surface, (40, 90, 30), row_rect, 1, border_radius=10)
+            elif row_rect.collidepoint(mouse_pos):
+                pygame.draw.rect(surface, (38, 32, 24), row_rect, border_radius=10)
 
-            surface.blit(text_surf, text_rect)
+            # =========================
+            # PROFILE PICTURE + COLOR DOT OVERLAY
+            # =========================
+            pfp = self.player_pfps.get(username)
+            pfp_size = 32
+            pfp_x = x_start
+            pfp_y = y + 2
+            center = (pfp_x + pfp_size // 2, pfp_y + pfp_size // 2)
 
-            # 5. CLICK AREA LOGIC (Keeping your original logic requirement)
-            # We use the row_rect for a cleaner hit-box than individual elements
+            ring_color = (100, 220, 60) if is_active else (60, 50, 38)
+            pygame.draw.circle(surface, ring_color, center, pfp_size // 2 + 2)
+            pygame.draw.circle(surface, (25, 20, 15), center, pfp_size // 2)
+
+            pfp_rect = pygame.Rect(pfp_x, pfp_y, pfp_size, pfp_size)
+            if pfp:
+                pfp_img = pygame.transform.smoothscale(pfp, (pfp_size, pfp_size))
+                surface.blit(pfp_img, pfp_rect)
+            else:
+                initials_surf = font.render(username[0].upper(), True, (160, 140, 110))
+                surface.blit(initials_surf, initials_surf.get_rect(center=center))
+
+            # Color dot — bottom-right of avatar
+            dot_x = pfp_x + pfp_size - 3
+            dot_y = pfp_y + pfp_size - 3
+            pygame.draw.circle(surface, (25, 20, 15), (dot_x, dot_y), 6)
+            pygame.draw.circle(surface, player_color, (dot_x, dot_y), 5)
+
+            # =========================
+            # USERNAME + VP
+            # =========================
+            text_x = x_start + pfp_size + 10
+            text_color = (160, 255, 120) if is_active else (200, 185, 165)
+            vp_color = (106, 255, 106) if is_active else (138, 122, 106)
+
+            name_surf = font.render(username, True, text_color)
+            surface.blit(name_surf, (text_x, y + 3))
+
+            sep_x = text_x + name_surf.get_width() + 6
+            pygame.draw.circle(surface, (74, 58, 42), (sep_x, y + 11), 3)
+
+            vp_surf = small_font.render(f"{points} VP", True, vp_color)
+            surface.blit(vp_surf, (sep_x + 8, y + 4))
+
+            # =========================
+            # VP PROGRESS BAR
+            # =========================
+            bar_y = y + 28
+            bar_x = text_x
+            bar_w = 150
+            bar_h = 3
+            bar_fill = int(bar_w * min(points / 10.0, 1.0))
+
+            pygame.draw.rect(surface, (22, 18, 13), pygame.Rect(bar_x, bar_y, bar_w, bar_h), border_radius=2)
+            if bar_fill > 0:
+                fill_color = (100, 220, 60) if is_active else player_color
+                pygame.draw.rect(surface, fill_color, pygame.Rect(bar_x, bar_y, bar_fill, bar_h), border_radius=2)
+
+            # =========================
+            # BADGES
+            # =========================
+            label_font = pygame.font.Font(None, 16)
+
+            has_road = (username == getattr(self, "longest_road_owner", None))
+            has_army = (username == getattr(self, "largest_army_owner", None))
+
+            road_label_surf = label_font.render("Road", True, (160, 130, 60))
+            army_label_surf = label_font.render("Army", True, (160, 130, 60))
+            road_pill_w = 16 + road_label_surf.get_width() + 10
+            army_pill_w = 16 + army_label_surf.get_width() + 10
+
+            gap = 6
+            total_badge_w = 0
+            if has_road:
+                total_badge_w += road_pill_w
+            if has_army:
+                total_badge_w += army_pill_w
+            if has_road and has_army:
+                total_badge_w += gap
+
+            badge_x = row_rect.right - total_badge_w - 10
+
+            if has_road:
+                self.draw_badge(surface, self.longest_road_img, "Road", badge_x, y + 18)
+                badge_x += road_pill_w + gap
+
+            if has_army:
+                self.draw_badge(surface, self.largest_army_img, "Army", badge_x, y + 18)
+
+            # =========================
+            # ACTIVE TURN INDICATOR DOT
+            # =========================
+            if is_active:
+                pygame.draw.circle(surface, (100, 255, 100), (row_rect.right - 10, row_rect.centery), 4)
+
+            # =========================
+            # STORE CLICK AREA
+            # =========================
             self.player_rects[username] = row_rect
 
-            y += 45  # Space between rows
+            y += 48
+
+        # =========================
+        # FOOTER
+        # =========================
+        footer_y = panel_rect.bottom - 22
+        pygame.draw.line(surface, (46, 36, 24), (x_start, footer_y), (panel_rect.right - 14, footer_y), 1)
+        footer_surf = small_font.render("10 points to win", True, (80, 65, 48))
+        surface.blit(footer_surf, (x_start, footer_y + 6))
+
+    def draw_badge(self, surface, img, label, x, y):
+        if img is None:
+            return
+
+        icon_size = 24
+        label_font = pygame.font.Font(None, 16)
+        label_surf = label_font.render(label, True, (160, 130, 60))
+        pill_w = icon_size + label_surf.get_width() + 12
+        pill_h = 24
+
+        pill_rect = pygame.Rect(x, y - pill_h // 2, pill_w, pill_h)
+        pygame.draw.rect(surface, (35, 28, 14), pill_rect, border_radius=5)
+        pygame.draw.rect(surface, (80, 60, 20), pill_rect, 1, border_radius=5)
+
+        small_icon = pygame.transform.smoothscale(img, (icon_size, icon_size))
+        surface.blit(small_icon, (x + 3, y - icon_size // 2))
+        surface.blit(label_surf, (x + icon_size + 7, y - label_surf.get_height() // 2))
     # ==================================================
     # BUTTON
     # ==================================================

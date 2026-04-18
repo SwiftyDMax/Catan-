@@ -1132,9 +1132,9 @@ def join_game(username, game_code, color):
                 p: {
                     "wood":10,
                     "brick": 10,
-                    "wool": 0,
-                    "wheat": 0,
-                    "ore": 0,
+                    "wool": 10,
+                    "wheat": 10,
+                    "ore": 10,
                     "dev_cards": []
                 }
                 for p in players
@@ -1282,87 +1282,98 @@ def place_road(username, game_code, edge):
     room = rooms.get(game_code)
 
     if not game or not room:
-        return {"success": False, "message": "Game not found"}
+        return {
+            "success": False,
+            "error": "game_not_found",
+            "longest_road_update": None
+        }
 
-    a, b = edge
-    a, b = normalize(a), normalize(b)
+    a, b = normalize(edge[0]), normalize(edge[1])
     edge = tuple(sorted((a, b)))
 
     if edge in game["roads"]:
-        return {"success": False, "message": "Road exists"}
+        return {
+            "success": False,
+            "error": "road_exists",
+            "longest_road_update": None
+        }
 
     is_setup = game["phase"].startswith("setup")
 
     # =========================
-    # TURN / SETUP VALIDATION
+    # VALIDATION ONLY (NO MUTATION)
     # =========================
     if is_setup:
         last = game["last_settlement"].get(username)
-
         if not last:
-            return {"success": False, "message": "Place settlement first"}
+            return {
+                "success": False,
+                "error": "place_settlement_first",
+                "longest_road_update": None
+            }
 
         if last not in edge:
-            return {"success": False, "message": "Road must connect to settlement"}
+            return {
+                "success": False,
+                "error": "not_connected_to_settlement",
+                "longest_road_update": None
+            }
 
     else:
         if game["current_turn"] != username:
-            return {"success": False, "message": "Not your turn"}
+            return {
+                "success": False,
+                "error": "not_your_turn",
+                "longest_road_update": None
+            }
 
         if not game.get("dice_rolled_this_turn", False):
-            return {"success": False, "message": "Roll dice first"}
+            return {
+                "success": False,
+                "error": "roll_dice_first",
+                "longest_road_update": None
+            }
 
     # =========================
-    # 🔥 ROAD BUILDING DEV CARD
+    # COST CHECK (VALIDATION ONLY)
     # =========================
     ignore_cost = False
-
     rb = game.get("road_building_active")
+
     if rb and rb["player"] == username:
         ignore_cost = True
 
+    player_res = game["player_resources"].get(username, {})
+
+    if not is_setup and not ignore_cost:
+        if player_res.get("wood", 0) < 1 or player_res.get("brick", 0) < 1:
+            return {
+                "success": False,
+                "error": "missing_resources",
+                "longest_road_update": None
+            }
+
+    # =========================
+    # 🔥 ONLY NOW MUTATE STATE
+    # =========================
+
+    # deduct resources
+    if not is_setup and not ignore_cost:
+        player_res["wood"] -= 1
+        player_res["brick"] -= 1
+
+    # road building dev card usage
+    if rb and rb["player"] == username:
         rb["roads_left"] -= 1
         if rb["roads_left"] <= 0:
             game["road_building_active"] = None
 
-    # =========================
-    # 🔥 RESOURCE COST CHECK
-    # =========================
-    player_res = game["player_resources"].get(username, {})
-
-    if not is_setup and not ignore_cost:
-
-        missing = []
-
-        if player_res.get("wood", 0) < 1:
-            missing.append("wood")
-
-        if player_res.get("brick", 0) < 1:
-            missing.append("brick")
-
-        if missing:
-            return {
-                "success": False,
-                "error": "missing_resources",
-                "missing": missing
-            }
-
-        # deduct resources
-        player_res["brick"] -= 1
-        player_res["wood"] -= 1
-
-    # =========================
-    # PLACE ROAD
-    # =========================
+    # place road
     game["roads"][edge] = username
 
     lr_update = update_longest_road_owner(game)
 
-
-
-    # =========================
-    # SETUP PROGRESSION
-    # =========================
+    # setup progression
     if is_setup:
         setup_order = game["setup_order"]
         game["setup_index"] += 1
@@ -1376,6 +1387,7 @@ def place_road(username, game_code, edge):
 
     return {
         "success": True,
+        "error": None,
         "longest_road_update": lr_update
     }
 def build_player_road_graph(game, username):
