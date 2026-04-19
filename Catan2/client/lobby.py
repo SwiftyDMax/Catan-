@@ -33,7 +33,7 @@ class LobbyWindow(QWidget):
         self.is_host = False
 
         self.timer = None
-
+        self.challenges = None
         self.nav_buttons = {}
         self.page_indices = {}
         self.in_game = False
@@ -621,7 +621,7 @@ class LobbyWindow(QWidget):
             if not response.get("success") or not response.get("challenges"):
                 raise ValueError("No challenges returned")
 
-            challenges = response["challenges"]
+            self.challenges = response["challenges"]
 
             # ================= SCROLL AREA =================
             scroll = QScrollArea()
@@ -630,7 +630,7 @@ class LobbyWindow(QWidget):
             scroll_layout = QVBoxLayout(scroll_content)
             scroll_layout.setSpacing(15)
 
-            for c in challenges:
+            for c in self.challenges:
                 # Card-like frame for each challenge
                 card = QFrame()
                 card.setStyleSheet("""
@@ -1403,21 +1403,19 @@ class LobbyWindow(QWidget):
     # =========================================================
     # NAVIGATION
     # =========================================================
+    def rebuild_challenges_page(self):
+        index = self.page_indices["Challenges"]
+
+        old_widget = self.center_stack.widget(index)
+
+        new_widget = self.build_challenges_page()
+
+        self.center_stack.removeWidget(old_widget)
+        old_widget.deleteLater()
+
+        self.center_stack.insertWidget(index, new_widget)
 
     def on_nav_clicked(self, name):
-        # Optional: Warn the user but still allow navigation
-        if self.in_game and name != "Waiting":
-            reply = QMessageBox.question(
-                self,
-                "Game in Progress",
-                "You have already created or joined a game.\n"
-                "Navigating away won't cancel the game.\n"
-                "Do you want to continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes
-            )
-            if reply == QMessageBox.No:
-                return  # user canceled navigation
 
         # Update nav buttons
         for n, btn in self.nav_buttons.items():
@@ -1425,13 +1423,16 @@ class LobbyWindow(QWidget):
             btn.setChecked(active)
             btn.setStyleSheet(self.nav_button_style(active))
 
-        # Change page
+        # 🔥 FIX HERE
+        if name == "Challenges":
+            self.rebuild_challenges_page()
+
         self.center_stack.setCurrentIndex(self.page_indices[name])
 
-        # Start/stop friends timer
+        # Friends timer
         if name == "Friends":
             if hasattr(self, "friends_timer"):
-                self.friends_timer.start(4000)  # every 4 seconds
+                self.friends_timer.start(4000)
         else:
             if hasattr(self, "friends_timer"):
                 self.friends_timer.stop()
@@ -1463,6 +1464,7 @@ class LobbyWindow(QWidget):
 
     def join_game(self):
         code = self.code_input.text().strip().upper()
+        self.code_input.clear()
         if not code:
             return
 
@@ -1538,7 +1540,7 @@ class LobbyWindow(QWidget):
     def start_game(self):
         print("[DEBUG] Starting game process")
 
-        self.close()  # 🔥 CLOSE LOBBY FIRST
+        self.hide()  # 🔥 CLOSE LOBBY FIRST
 
         start_game_process(
             client=self.client,

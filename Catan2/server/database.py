@@ -667,3 +667,54 @@ class Database:
             return messages
         finally:
             conn.close()
+
+    def add_win(self, username):
+        username = self._normalize_username(username)
+
+        conn = None
+        try:
+            conn = self.connect()
+            cur = conn.cursor()
+
+            with _db_lock:
+                cur.execute("""
+                    UPDATE profiles
+                    SET games_won = games_won + 1
+                    WHERE user_id = (
+                        SELECT id FROM users WHERE username = ?
+                    )
+                """, (username,))
+
+                conn.commit()
+
+            return cur.rowcount > 0
+
+        finally:
+            if conn:
+                conn.close()
+
+    def add_win_challenge_progress(self, username, challenge_name="Win 5 games"):
+        username = self._normalize_username(username)
+
+        conn = None
+        try:
+            conn = self.connect()
+            cur = conn.cursor()
+
+            with _db_lock:
+                cur.execute("""
+                    UPDATE challenges
+                    SET completed = completed + 1
+                    WHERE user_id = (
+                        SELECT id FROM users WHERE username = ?
+                    )
+                    AND challenge_name = ?
+                """, (username, challenge_name))
+
+                conn.commit()
+
+            return cur.rowcount > 0
+
+        finally:
+            if conn:
+                conn.close()

@@ -388,6 +388,8 @@ def use_dev_card(username, game_code, card):
 
         if winner:
             game["winner"] = winner
+            db.add_win(winner)
+            db.add_win_challenge_progress(winner)
         return {"success": True, "action": "move_robber"}
 
 
@@ -410,7 +412,8 @@ def use_dev_card(username, game_code, card):
 
         if winner:
             game["winner"] = winner
-
+            db.add_win(winner)
+            db.add_win_challenge_progress(winner)
         return {
 
             "success": True,
@@ -704,8 +707,8 @@ def roll_dice(username, game_code):
     # =========================
     # ROLL
     # =========================
-    d1 = random.randint(1, 6)
-    d2 = random.randint(1, 6)
+    d1 = random.randint(1, 3)
+    d2 = random.randint(1, 3)
 
     dice["result"] = (d1, d2)
     total = d1 + d2
@@ -1132,9 +1135,9 @@ def join_game(username, game_code, color):
                 p: {
                     "wood":10,
                     "brick": 10,
-                    "wool": 10,
-                    "wheat": 10,
-                    "ore": 10,
+                    "wool": 15,
+                    "wheat": 15,
+                    "ore": 15,
                     "dev_cards": []
                 }
                 for p in players
@@ -1892,11 +1895,13 @@ def place_settlement(username, game_code, position):
     # 🔥 MOVE TO ROAD PHASE (setup only)
     if game["phase"].startswith("setup"):
         game["phase"] = "setup_road"
-    add_victory_points(game, username, 1)
+    add_victory_points(game, username, 10)
     winner = check_winner(game)
 
     if winner:
         game["winner"] = winner
+        db.add_win(winner)
+        db.add_win_challenge_progress(winner)
 
     return {"success": True}
 
@@ -1953,13 +1958,99 @@ def upgrade_city(username, game_code, position):
 
     if winner:
         game["winner"] = winner
+        db.add_win(winner)
+        db.add_win_challenge_progress(winner)
     return {"success": True}
+# =====================
+# lEAVE GAME
+# =====================
+def leave_game(username, game_code):
+    game = games.get(game_code)
+    room = rooms.get(game_code)
+
+    if not game or not room:
+        return {"success": False, "message": "Game not found"}
+
+    # =========================
+    # REMOVE FROM ROOM
+    # =========================
+    if "players" in room and username in room["players"]:
+        room["players"].remove(username)
+
+    # =========================
+    # REMOVE FROM GAME STATE
+    # =========================
+    game["player_resources"].pop(username, None)
+    game["victory_points"].pop(username, None)
+    game.get("player_colors", {}).pop(username, None)
+
+    # settlements / cities / roads cleanup (optional but recommended)
+    game["settlements"] = {
+        pos: owner for pos, owner in game["settlements"].items()
+        if owner != username
+    }
+
+    game["cities"] = {
+        pos: owner for pos, owner in game["cities"].items()
+        if owner != username
+    }
+
+    game["roads"] = {
+        edge: owner for edge, owner in game["roads"].items()
+        if owner != username
+    }
+
+    # =========================
+    # TURN FIX
+    # =========================
+    if game.get("current_turn") == username:
+        players = room.get("players", [])
+
+        if players:
+            game["current_turn"] = players[0]  # simple fallback
+        else:
+            game["current_turn"] = None
+
+    # =========================
+    # CLEAN SPECIAL STATES
+    # =========================
+    if game.get("robber_pending_steal"):
+        if game["robber_pending_steal"].get("by") == username:
+            game["robber_pending_steal"] = None
+            game["robber_active"] = False
+
+    if game.get("discard_required"):
+        game["discard_required"].pop(username, None)
+        game.get("discard_submitted", {}).pop(username, None)
+
+    # =========================
+    # FIX BADGES
+    # =========================
+    if game.get("largest_army_owner") == username:
+        game["largest_army_owner"] = None
+
+    if game.get("longest_road_owner") == username:
+        game["longest_road_owner"] = None
+
+    # =========================
+    # DELETE GAME IF EMPTY
+    # =========================
+    if not room.get("players"):
+        game["ended"] = True
+        games.pop(game_code, None)
+        rooms.pop(game_code, None)
+        return {"success": True, "message": "Game closed"}
 
 
+    return {
+        "success": True,
+        "players_remaining": room.get("players", [])
+    }
 
 # =====================
 # Client handler
 # =====================
+
 def handle_client(client_socket):
     username = None
     try:
@@ -2255,6 +2346,11 @@ def handle_client(client_socket):
                     request.get("username"),
                     request.get("game_code"),
                     request.get("discard_dict")
+                )
+            elif action == "leave_game":
+                response = leave_game(
+                    request.get("username"),
+                    request.get("game_code")
                 )
 
             send_msg(client_socket, response)

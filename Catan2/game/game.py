@@ -45,6 +45,7 @@ class CatanGame:
         self.game_over_screen = False
         self.winner = None
         self.largest_army_owner = None
+        self.last_largest_army_owner = None
         self.longest_road_owner = None
         self.game_stats = {}
         self.lobby_button_rect = pygame.Rect(700, 800, 400, 80)
@@ -158,6 +159,8 @@ class CatanGame:
         self.missing_resources = []
         self.longest_road_popup = None
         self.longest_road_popup_time = 0
+        self.largest_army_popup = None
+        self.largest_army_popup_time = 0
         pygame.init()
         pygame.font.init()
         self.font = pygame.font.Font(None, 32)
@@ -337,28 +340,46 @@ class CatanGame:
                         self.steal_selecting = False
                         self.steal_targets = []
                 if "discard_required" in r:
-
                     self.discard_required = r.get("discard_required") or {}
-                    print(f"self.discard_required :  {self.discard_required}")
                     self.my_discard_amount = self.discard_required.get(self.username, 0)
-                    print(f"self.my_discard_amount :  {self.my_discard_amount}")
                     self.discarding = self.my_discard_amount > 0 and r["discard_required"].get(self.username, 0) > 0
-                    print(f"self.discarding : {self.discarding}")
                 if "discard_submitted" in r:
                     self.discard_submitted = r["discard_submitted"]
+                if "largest_army_owner" in r:
+
+                    new_owner = r["largest_army_owner"]
+
+                    if new_owner != getattr(self, "last_largest_army_owner", None):
+
+                        prev_owner = self.last_largest_army_owner
+
+                        self.largest_army_owner = new_owner
+                        self.last_largest_army_owner = new_owner
+
+                        if new_owner:
+                            self.largest_army_popup = {
+                                "owner": new_owner,
+                                "previous": prev_owner
+                            }
+                            self.largest_army_popup_time = time.time()
+
+                if "largest_army_owner" in r:
+                    self.largest_army_owner = r["largest_army_owner"]
+
+                if "longest_road_owner" in r:
+                    self.longest_road_owner = r["longest_road_owner"]
+                print(f"winner in r : {"winner" in r }")
+                print(f"r[winner] : {r["winner"]}")
+                print(f"not self.game_over_screen : {not self.game_over_screen}")
                 if "winner" in r and r["winner"] and not self.game_over_screen:
                     self.winner = r["winner"]
                     self.game_over_screen = True
-                if "largest_army" in r:
-                    self.largest_army_owner = r["largest_army"]
-
-                if "longest_road" in r:
-                    self.longest_road_owner = r["longest_road"]
 
                     self.game_stats = self.build_game_stats(r)
 
                     print("GAME OVER STATS:")
                     print(self.game_stats)
+
 
             except Exception as e:
                 print("[SYNC ERROR]", e)
@@ -488,7 +509,6 @@ class CatanGame:
 
             if data:
                 self.longest_road_owner = data.get("longest_road_owner")
-                self.largest_army_owner = data.get("largest_army_owner")  # if you send it later
 
             # safe check
             if data and isinstance(data, dict):
@@ -568,6 +588,63 @@ class CatanGame:
         info = f"Length: {length}   (+2 Victory Points)"
         info_text = font_small.render(info, True, (220, 220, 220))
         surface.blit(info_text, info_text.get_rect(center=(rect.centerx, rect.y + 180)))
+
+    def draw_largest_army_popup(self, surface):
+        if self.largest_army_popup is None:
+            return
+
+        if time.time() - self.largest_army_popup_time > 3:
+            self.largest_army_popup = None
+            return
+        data = self.largest_army_popup
+
+        # =========================
+        # BACKGROUND BOX
+        # =========================
+        rect = pygame.Rect(500, 300, 800, 250)
+
+        alpha = min(255, int((time.time() - self.largest_army_popup_time) * 400))
+
+        popup_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        popup_surface.fill((40, 20, 40, alpha))  # slightly different color tint
+
+        surface.blit(popup_surface, rect.topleft)
+        pygame.draw.rect(surface, (180, 120, 220), rect, 4, border_radius=15)
+
+        # =========================
+        # TITLE
+        # =========================
+        font_big = pygame.font.Font(None, 60)
+        title = font_big.render("LARGEST ARMY!", True, (180, 80, 255))
+        surface.blit(title, title.get_rect(center=(rect.centerx, rect.y + 50)))
+
+        # =========================
+        # MESSAGE
+        # =========================
+        font_mid = pygame.font.Font(None, 40)
+
+        owner = data["owner"]
+        prev = data["previous"]
+
+        if prev and prev != owner:
+            msg = f"{owner} took Largest Army from {prev}!"
+        else:
+            msg = f"{owner} now has the Largest Army!"
+
+        text = font_mid.render(msg, True, (255, 255, 255))
+        surface.blit(text, text.get_rect(center=(rect.centerx, rect.y + 120)))
+
+        # =========================
+        # INFO
+        # =========================
+        font_small = pygame.font.Font(None, 32)
+
+        info = "Requires 3+ Knights (+2 Victory Points)"
+        info_text = font_small.render(info, True, (220, 220, 220))
+        surface.blit(info_text, info_text.get_rect(center=(rect.centerx, rect.y + 180)))
+
+
+
     def try_upgrade_city(self, mouse_pos):
 
         if not self.my_turn:
@@ -1072,7 +1149,8 @@ class CatanGame:
             label_font = pygame.font.Font(None, 16)
 
             has_road = (username == getattr(self, "longest_road_owner", None))
-            has_army = (username == getattr(self, "largest_army_owner", None))
+            has_army = str(username).lower() == str(self.largest_army_owner).lower()
+
 
             road_label_surf = label_font.render("Road", True, (160, 130, 60))
             army_label_surf = label_font.render("Army", True, (160, 130, 60))
@@ -2647,6 +2725,9 @@ class CatanGame:
                                 # =========================
                                 if card == "knight":
                                     self.show_robber_select = True
+                                    self.robber_already_moved = False  # 🔥 IMPORTANT FIX
+                                    self.steal_selecting = False
+                                    self.steal_targets = []
 
                                 # =========================
                                 # REFRESH STATE
@@ -2656,19 +2737,22 @@ class CatanGame:
                                     game_code=self.game_code
                                 )
 
-                                if r and r.get("success") and "player_resources" in r:
-                                    self.player_resources = r["player_resources"]
+                                if r and r.get("success"):
+
+                                    if "player_resources" in r:
+                                        self.player_resources = r["player_resources"]
+
+                                        # FIXED INDENTATION (always runs)
+                                        for user, res in self.player_resources.items():
+                                            dev_list = res.get("dev_cards", [])
+                                            res["dev_cards_raw"] = dev_list
+                                            res["dev_cards"] = self.count_dev_cards(dev_list)
+
                                 else:
                                     print("[ERROR] Bad game_state:", r)
 
-                                    for user, res in self.player_resources.items():
-                                        dev_list = res.get("dev_cards", [])
-                                        res["dev_cards_raw"] = dev_list
-                                        res["dev_cards"] = self.count_dev_cards(dev_list)
-
                                 self.selected_dev_card = None
                                 self.show_dev_cards = False
-                                break
 
 
                     if self.show_road_spots:
@@ -2704,7 +2788,8 @@ class CatanGame:
                             game_code=self.game_code
                         )
 
-                        self.running = False  # or return to lobby screen
+                        self.running = False
+                        self.go_to_lobby = True
 
                     elif self.show_city_spots:
 
@@ -2721,6 +2806,7 @@ class CatanGame:
                 print("[DRAW CRASH]", e)
 
         pygame.quit()
+        return "go_to_lobby"
 
     # ==================================================
     # DRAW
@@ -2797,7 +2883,43 @@ class CatanGame:
         except Exception as e:
             print("[RENDER ERROR]", e)
             self.valid_spots = set()
+        if self.steal_selecting:
+            # 1. Safety check: ensure steal_targets is actually a list we can iterate
+            if isinstance(self.steal_targets, list):
+                for i, target in enumerate(self.steal_targets):
 
+                    # 2. Logic Check: handle both string usernames or dict objects
+                    if isinstance(target, dict):
+                        username = target.get("username", "Unknown")
+                        # Ensure player_pfps is a dict before calling .get()
+                        pfp = None
+                        if isinstance(self.player_pfps, dict):
+                            pfp = self.player_pfps.get(username)
+                    else:
+                        username = str(target)
+                        pfp = self.player_pfps.get(username) if isinstance(self.player_pfps, dict) else None
+
+                    rect = pygame.Rect(600, 200 + i * 60, 300, 50)
+                    pygame.draw.rect(self.screen, (80, 40, 40), rect, border_radius=8)
+
+                    # 3. Blit safely
+                    if pfp and isinstance(pfp, pygame.Surface):
+                        self.screen.blit(pfp, (rect.x + 5, rect.y + 5))
+                    else:
+                        # Placeholder if PFP is missing or still a list/string
+                        pygame.draw.rect(self.screen, (60, 60, 60), (rect.x + 5, rect.y + 5, 30, 30), border_radius=4)
+
+                    text = self.font.render(f"Steal from {username}", True, (255, 255, 255))
+                    self.screen.blit(text, (rect.x + 45, rect.y + 10))
+        if self.show_robber_select and not self.discard_required and not self.steal_selecting:
+            for pos in self.hexagon_positions:
+                if pos == self.robber_pos:
+                    continue
+                pygame.draw.circle(self.screen, (255, 255, 255), (int(pos[0]), int(pos[1])), 40, 2)
+        if hasattr(self, "winner") and self.winner:
+            font = pygame.font.Font(None, 80)
+            text = font.render(f"{self.winner} WINS!", True, (255, 215, 0))
+            self.screen.blit(text, (self.W // 2 - 200, self.H // 2))
         # draw roads
         self.draw_placed_roads(self.screen)
         self.draw_road_previews(self.screen)
@@ -2819,17 +2941,13 @@ class CatanGame:
         self.draw_incoming_trade(self.screen)
         self.draw_outgoing_trade(self.screen)
         self.draw_longest_road_popup(self.screen)
+        self.draw_largest_army_popup(self.screen)
         if self.discarding and not self.username in self.discard_submitted :
             self.draw_discard_ui(self.screen)
             pygame.display.flip()
             return
-        print(f"robber_select : {self.show_robber_select}")
-        print(f"self.discard_required : {self.discard_required}")
-        if self.show_robber_select and not self.discard_required and not self.steal_selecting:
-            for pos in self.hexagon_positions:
-                if pos == self.robber_pos:
-                    continue
-                pygame.draw.circle(self.screen, (255, 255, 255), (int(pos[0]), int(pos[1])), 40, 2)
+
+
             # =========================
         if self.road_error_type == "road_cost_missing" and self.missing_resources:
 
@@ -2937,39 +3055,7 @@ class CatanGame:
                 text = self.font.render(f"{res} ({self.yop_remaining} left)", True, (255, 255, 255))
                 self.screen.blit(text, (rect.x + 10, rect.y + 10))
 
-        if self.steal_selecting:
-            # 1. Safety check: ensure steal_targets is actually a list we can iterate
-            if isinstance(self.steal_targets, list):
-                for i, target in enumerate(self.steal_targets):
 
-                    # 2. Logic Check: handle both string usernames or dict objects
-                    if isinstance(target, dict):
-                        username = target.get("username", "Unknown")
-                        # Ensure player_pfps is a dict before calling .get()
-                        pfp = None
-                        if isinstance(self.player_pfps, dict):
-                            pfp = self.player_pfps.get(username)
-                    else:
-                        username = str(target)
-                        pfp = self.player_pfps.get(username) if isinstance(self.player_pfps, dict) else None
-
-                    rect = pygame.Rect(600, 200 + i * 60, 300, 50)
-                    pygame.draw.rect(self.screen, (80, 40, 40), rect, border_radius=8)
-
-                    # 3. Blit safely
-                    if pfp and isinstance(pfp, pygame.Surface):
-                        self.screen.blit(pfp, (rect.x + 5, rect.y + 5))
-                    else:
-                        # Placeholder if PFP is missing or still a list/string
-                        pygame.draw.rect(self.screen, (60, 60, 60), (rect.x + 5, rect.y + 5, 30, 30), border_radius=4)
-
-                    text = self.font.render(f"Steal from {username}", True, (255, 255, 255))
-                    self.screen.blit(text, (rect.x + 45, rect.y + 10))
-
-        if hasattr(self, "winner") and self.winner:
-            font = pygame.font.Font(None, 80)
-            text = font.render(f"{self.winner} WINS!", True, (255, 215, 0))
-            self.screen.blit(text, (self.W // 2 - 200, self.H // 2))
 
 
         pygame.display.flip()  # 👈 ALWAYS LAST LINE
